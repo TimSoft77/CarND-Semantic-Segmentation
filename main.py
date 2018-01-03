@@ -52,12 +52,14 @@ def layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes):
     :param num_classes: Number of classes to classify
     :return: The Tensor for the last layer of output
     """
-    output = tf.layers.conv2d(vgg_layer7_out, num_classes, 1, strides=(1, 1), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
-    up1 = tf.layers.conv2d_transpose(output, num_classes, 4, strides=(2,2), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
-    sk1 = tf.add(up1, vgg_layer4_out)
-    up2 = tf.layers.conv2d_transpose(sk1, num_classes, 4, strides=(2,2), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
-    sk2 = tf.add(up2, vgg_layer3_out)
-    up3 = tf.layers.conv2d_transpose(sk2, num_classes, 16, strides=(8, 8), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+    l7output = tf.layers.conv2d(vgg_layer7_out, num_classes, 1, strides=(1, 1), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3), kernel_initializer=tf.truncated_normal_initializer(stddev=0.005))
+    up1 = tf.layers.conv2d_transpose(l7output, num_classes, 4, strides=(2,2), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3), kernel_initializer=tf.truncated_normal_initializer(stddev=0.005))
+    l4output = tf.layers.conv2d(vgg_layer4_out, num_classes, 1, strides=(1, 1), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3), kernel_initializer=tf.truncated_normal_initializer(stddev=0.005))
+    sk1 = tf.add(up1, l4output)
+    up2 = tf.layers.conv2d_transpose(sk1, num_classes, 4, strides=(2,2), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3), kernel_initializer=tf.truncated_normal_initializer(stddev=0.005))
+    l3output = tf.layers.conv2d(vgg_layer3_out, num_classes, 1, strides=(1, 1), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3), kernel_initializer=tf.truncated_normal_initializer(stddev=0.005))
+    sk2 = tf.add(up2, l3output)
+    up3 = tf.layers.conv2d_transpose(sk2, num_classes, 16, strides=(8, 8), padding='same', kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3), kernel_initializer=tf.truncated_normal_initializer(stddev=0.005))
     return up3
 tests.test_layers(layers)
 
@@ -77,9 +79,9 @@ def optimize(nn_last_layer, correct_label, learning_rate, num_classes):
     cross_entropy_loss_op = tf.reduce_mean(cross_entropy_loss_amount)
     regularization_loss_op = tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
     loss_op = cross_entropy_loss_op + regularization_loss_op
-    optimizer = tf.train.AdamOptimizer()
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
     train_op = optimizer.minimize(loss_op)
-    return logits, train_op, cross_entropy_loss_amount
+    return logits, train_op, loss_op
 tests.test_optimize(optimize)
 
 
@@ -98,14 +100,15 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
     :param keep_prob: TF Placeholder for dropout keep probability
     :param learning_rate: TF Placeholder for learning rate
     """
-    # TODO: Implement function
     sess.run(tf.global_variables_initializer())
+
+    loss = 0
 
     for i in range(epochs):
         for image, label in get_batches_fn(batch_size):
-            sess.run(train_op, feed_dict={input_image: image, correct_label: label, keep_prob: 0.5}) # TODO Output loss?
+            _, loss = sess.run([train_op, cross_entropy_loss], feed_dict={input_image: image, correct_label: label, keep_prob: 0.5, learning_rate: 0.0001})
 
-        # TODO Print output of each epoch somehow
+        print("After epoch ", i, ", loss=", loss)
     pass
 tests.test_train_nn(train_nn)
 
@@ -116,9 +119,6 @@ def run():
     data_dir = './data'
     runs_dir = './runs'
     tests.test_for_kitti_dataset(data_dir)
-
-    batch_size = 32
-    num_epochs = 5
 
     # Download pretrained vgg model
     helper.maybe_download_pretrained_vgg(data_dir)
@@ -136,13 +136,19 @@ def run():
         # OPTIONAL: Augment Images for better results
         #  https://datascience.stackexchange.com/questions/5224/how-to-prepare-augment-images-for-neural-network
 
-        # TODO: Build NN using load_vgg, layers, and optimize function
+        # Variables and placeholders
+        batch_size = 16
+        num_epochs = 10
+        correct_label = tf.placeholder(tf.int32, [None, None, None, num_classes])
+        learning_rate = tf.placeholder(tf.float32)
+
+        # Build NN
         inputo, keep_prob, l3o, l4o, l7o = load_vgg(sess, vgg_path)
         outputo = layers(l3o, l4o, l7o, num_classes)
-        logitso, train_opo, cross_entropyo = optimize(outputo, tf.placeholder(tf.int32), tf.placeholder(tf.float32), num_classes) # TODO Type of placeholder for correct_label?
+        logitso, train_opo, cross_entropyo = optimize(outputo, correct_label, learning_rate, num_classes)
 
-        # TODO: Train NN using the train_nn function
-        train_nn(sess, num_epochs, batch_size, get_batches_fn, train_opo, cross_entropyo, inputo, tf.placeholder(tf.int32), keep_prob, tf.placeholder(tf.float32)) # TODO Type of placeholder for correct_label?
+        # Train NN
+        train_nn(sess, num_epochs, batch_size, get_batches_fn, train_opo, cross_entropyo, inputo, correct_label, keep_prob, learning_rate)
 
         # Save inference data
         #  helper.save_inference_samples(runs_dir, data_dir, sess, image_shape, logits, keep_prob, input_image)
